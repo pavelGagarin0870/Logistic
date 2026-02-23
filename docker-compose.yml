@@ -1,0 +1,89 @@
+version: "3.9"
+
+services:
+  write-db:
+    image: postgres:16
+    container_name: logistics-write-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: LogisticsWrite
+    ports:
+      - "5433:5432"
+    volumes:
+      - write_db_data:/var/lib/postgresql/data
+
+  read-db:
+    image: postgres:16
+    container_name: logistics-read-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: LogisticsRead
+    ports:
+      - "5434:5432"
+    volumes:
+      - read_db_data:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: logistics-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # Management UI
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  write-service:
+    build:
+      context: .
+      dockerfile: ./Logistics.WriteService/Dockerfile
+    container_name: logistics-write-service
+    depends_on:
+      write-db:
+        condition: service_started
+      read-db:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__WriteDbConnection: "Host=write-db;Database=LogisticsWrite;Username=postgres;Password=postgres"
+      ConnectionStrings__ReadDbConnection: "Host=read-db;Database=LogisticsRead;Username=postgres;Password=postgres"
+      RabbitMq__HostName: "rabbitmq"
+      RabbitMq__Port: "5672"
+      RabbitMq__UserName: "guest"
+      RabbitMq__Password: "guest"
+      RabbitMq__CommandQueue: "order-commands"
+
+  read-api:
+    build:
+      context: .
+      dockerfile: ./Logistics.ReadApi/Dockerfile
+    container_name: logistics-read-api
+    depends_on:
+      read-db:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__ReadDbConnection: "Host=read-db;Database=LogisticsRead;Username=postgres;Password=postgres"
+      RabbitMq__HostName: "rabbitmq"
+      RabbitMq__Port: "5672"
+      RabbitMq__UserName: "guest"
+      RabbitMq__Password: "guest"
+      RabbitMq__CommandQueue: "order-commands"
+      ASPNETCORE_URLS: "http://+:8080"
+    ports:
+      - "8080:8080"
+
+volumes:
+  write_db_data:
+  read_db_data:
+
